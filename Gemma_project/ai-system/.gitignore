@@ -2,7 +2,8 @@
 __pycache__/
 *.pyc
 *.pyo
-.env.local
+.env
+.env.*
 node_modules/
 dist/
 qdrant_storage/
@@ -10,3 +11,4 @@ postgres_data/
 ollama_data/
 *.gguf
 *.bin
+backend/static/screenshots/

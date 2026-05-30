@@ -248,7 +248,7 @@ class AdmissionPortalAgent:
         if not fillable:
             return {}
 
-        from backend.models.ollama_client import generate
+        from backend.models.openai_client import generate
 
         prompt = (
             f"Map these data fields to the correct HTML form elements.\n"
@@ -287,7 +287,7 @@ class AdmissionPortalAgent:
             await self._go(url)
             dom = await self._dom_snapshot()
 
-            from backend.models.ollama_client import generate
+            from backend.models.openai_client import generate
 
             prompt = (
                 f"University portal: {dom.get('title','')} | {dom.get('url','')}\n"
@@ -369,8 +369,7 @@ class AdmissionPortalAgent:
         await self._screenshot_step("login_filled", "Screenshot: Login form filled")
         t.add("Clicking Login button")
         await self._click(["Login", "Log In", "Sign In"])
-        await self.page.wait_for_timeout(3000)
-        await self.page.wait_for_timeout(2000)
+        await self.page.wait_for_timeout(5000)  # give portal time to process login
 
         url  = self.page.url
         body = (await self.page.inner_text("body")).lower()
@@ -439,19 +438,27 @@ class AdmissionPortalAgent:
         url  = self.page.url
         t.add(f"After registration: {url}")
 
-        if "account created" in body or "please login" in body or "login" in url.lower():
-            if "already" in body and ("taken" in body or "exists" in body or "used" in body):
-                await self._screenshot_step("reg_already_exists", "Screenshot: Email already registered")
-                t.add("Email already registered — proceeding to login", step_type="info")
-                return True, "already_registered"
-            await self._screenshot_step("reg_success", "Screenshot: Account created successfully")
-            t.add("Account created — proceeding to login")
-            return True, ""
+        # Check for email-already-registered first (before success signals)
+        if "already" in body and any(w in body for w in ("taken", "exists", "used", "registered", "found")):
+            await self._screenshot_step("reg_already_exists", "Screenshot: Email already registered")
+            t.add("Email already registered — proceeding to login", step_type="info")
+            return True, "already_registered"
 
-        if "verify" in body or "check your email" in body or "verification" in body:
+        # Email verification required — catch wide range of portal phrasing
+        verification_signals = [
+            "verify", "verification", "check your email", "confirm your email",
+            "confirmation email", "activate your account", "activation link",
+            "email sent", "link has been sent", "please check", "inbox",
+        ]
+        if any(s in body for s in verification_signals):
             await self._screenshot_step("reg_verify", "Screenshot: Email verification required")
             t.add("Email verification required before login", success=False)
             return False, "email_verification_required"
+
+        if "account created" in body or "please login" in body or "successfully" in body:
+            await self._screenshot_step("reg_success", "Screenshot: Account created successfully")
+            t.add("Account created — proceeding to login")
+            return True, ""
 
         if url.rstrip("/") != reg_url.rstrip("/"):
             await self._screenshot_step("reg_redirect", "Screenshot: Registration redirected")
@@ -459,7 +466,7 @@ class AdmissionPortalAgent:
             return True, ""
 
         await self._screenshot_step("reg_done", "Screenshot: Registration response")
-        t.add("Registration submitted")
+        t.add("Registration submitted — attempting login")
         return True, ""
 
     # ── Full automation flow ─────────────────────────────────────────────────

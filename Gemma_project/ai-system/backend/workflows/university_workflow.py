@@ -9,7 +9,7 @@ web_scraper.py from riphah.edu.pk + manually uploaded documents).
 If the collection is empty, triggers a background scrape automatically.
 """
 
-from backend.models.ollama_client import generate, WORKFLOW_MODEL, embed
+from backend.models.openai_client import chat_with_history, WORKFLOW_MODEL, embed
 from backend.rag.embeddings import get_client
 from backend.workflows.admission_workflow import ADMISSION_TRIGGER_KEYWORDS
 from backend.prompts.university_prompts import (
@@ -43,14 +43,6 @@ def _search_knowledge(query: str, top_k: int = 5) -> list[str]:
         return [r.payload.get("text", "") for r in results if r.score > 0.35]
     except Exception:
         return []
-
-
-def _build_context(history: list[dict]) -> str:
-    lines = []
-    for msg in history[-4:]:
-        role = "User" if msg.get("role") == "user" else "Assistant"
-        lines.append(f"{role}: {msg.get('content', '')}")
-    return "\n".join(lines)
 
 
 def _is_admission_trigger(text: str) -> bool:
@@ -106,9 +98,27 @@ def run(user_text: str, history: list[dict] | None = None) -> dict:
         except Exception as e:
             print(f"[University] Scrape trigger error: {e}")
 
-    # ── Layer 5: LLM call ─────────────────────────────────────────────────────
-    prompt   = build_university_rag_prompt(user_text, chunks, history)
-    response = generate(WORKFLOW_MODEL, prompt, ASKRIPHAH_SYSTEM)
+    # ── Layer 5: Build RAG-augmented system prompt and call LLM ──────────────
+    rag_block = "\n\n---\n\n".join(chunks) if chunks else ""
+    rag_system = (
+        ASKRIPHAH_SYSTEM
+        + (f"\n\n== RETRIEVED KNOWLEDGE ==\n{rag_block}" if rag_block else "")
+    )
+
+    try:
+        response = chat_with_history(
+            model=WORKFLOW_MODEL,
+            system_prompt=rag_system,
+            history=history,
+            user_message=user_text,
+        )
+    except Exception as exc:
+        return {
+            "response": "I'm having trouble connecting right now. Please try again in a moment.",
+            "workflow": "university",
+            "sources":  [],
+            "error":    str(exc),
+        }
 
     # ── Layer 6: Output sanitisation ─────────────────────────────────────────
     safe_response = sanitise_output(response.strip())

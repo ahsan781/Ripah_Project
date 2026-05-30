@@ -39,10 +39,51 @@ CANCEL_KEYWORDS = {"cancel", "stop", "quit", "abort", "exit", "nevermind", "neve
 # Minimum strength for a user-chosen portal password
 MIN_PASSWORD_LEN = 8
 
+# After this many consecutive failed attempts on the same field, show a detailed example
+MAX_FIELD_RETRIES = 2
+
+# Keywords that indicate the user is off-topic during form collection
+_OFFTOPIC_SIGNALS = re.compile(
+    r"\b(weather|news|joke|hello|hi |hey |what is|who is|when is|how are|tell me about"
+    r"|explain|define|what does|stock|price|btc|cricket|football|movie|song)\b",
+    re.I,
+)
+
 
 def _derive_default_password(cnic: str) -> str:
     """Simple memorable default — user should override this during review."""
     return "Riphah@12345"
+
+
+def _is_offtopic(text: str, field: dict) -> bool:
+    """Return True if the input looks like an off-topic question, not a field answer."""
+    stripped = text.strip()
+    # Very long text with a question mark is likely off-topic
+    if len(stripped) > 80 and stripped.endswith("?"):
+        return True
+    # Matches obvious off-topic signals
+    if _OFFTOPIC_SIGNALS.search(stripped):
+        return True
+    return False
+
+
+def _field_example(field: dict) -> str:
+    """Return a concrete example value for a field to guide the user after retries."""
+    examples = {
+        "full_name":    "e.g. **Muhammad Ahsan Khan**",
+        "father_name":  "e.g. **Muhammad Imran Khan**",
+        "cnic":         "e.g. **35202-1234567-9** (13 digits with dashes)",
+        "dob":          "e.g. **15/06/2000** (DD/MM/YYYY)",
+        "gender":       "Type **Male**, **Female**, or **Other**",
+        "email":        "e.g. **ahsan.khan@gmail.com**",
+        "phone":        "e.g. **0300-1234567** or **+923001234567**",
+        "program":      "e.g. **MBBS**, **BS CS**, **BBA**, **BE**, **Pharm-D**",
+        "campus":       "e.g. **Islamabad**, **Lahore**, **Rawalpindi**, **Faisalabad**",
+        "address":      "e.g. **House 5, Street 3, G-11/2, Islamabad**",
+        "entry_test":   "e.g. **85** (your score) or type **Not yet appeared**",
+        "portal_password": "e.g. **Riphah@2026** (at least 8 characters)",
+    }
+    return examples.get(field.get("key", ""), "")
 
 ADMISSION_TRIGGER_KEYWORDS = [
     "apply for admission",
@@ -74,18 +115,20 @@ ADMISSION_TRIGGER_KEYWORDS = [
 def start(session_id: str) -> dict:
     """Create a fresh admission workflow state in the 'scanning' phase."""
     return {
-        "session_id":      session_id,
-        "workflow_type":   "admission",
-        "phase":           "scanning",
-        "fields":          [],
-        "required_docs":   [],
-        "collected_data":  {},
+        "session_id":        session_id,
+        "workflow_type":     "admission",
+        "phase":             "scanning",
+        "fields":            [],
+        "required_docs":     [],
+        "collected_data":    {},
         "current_field_idx": 0,
-        "application_id":  f"RIU-{uuid.uuid4().hex[:8].upper()}",
-        "docs_uploaded":   {},
+        "field_retry_counts": {},   # key → consecutive failure count for that field
+        "application_id":    f"RIU-{uuid.uuid4().hex[:8].upper()}",
+        "docs_uploaded":     {},
         "automation_result": None,
-        "workflow_schema": {},   # populated by _handle_scanning after portal exploration
-        "started_at":      datetime.now().isoformat(),
+        "automation_error":  None,  # last automation error message
+        "workflow_schema":   {},
+        "started_at":        datetime.now().isoformat(),
     }
 
 
@@ -144,24 +187,86 @@ def advance(state: dict, user_input: str) -> Tuple[dict, str, bool]:
         return _handle_confirm(state, user_input)
 
     if phase == "automating":
+        # While automation runs, remind user what data was collected
+        data = state.get("collected_data", {})
+        name = data.get("full_name", "")
+        prog = data.get("program", "")
         return state, (
-            "Your application is being submitted on the portal right now. "
-            "You can see live progress in the panel below. Please wait..."
+            f"⏳ **Submitting your application on the Riphah portal right now.**\n\n"
+            f"Applicant: **{name}** | Program: **{prog}**\n\n"
+            "You can see live progress in the panel below. This usually takes 1–3 minutes. Please wait..."
         ), False
 
     if phase == "complete":
         result = state.get("automation_result", {})
-        return state, result.get("message", "Application process complete."), True
+        msg    = result.get("message", "Application process complete.")
+        return state, msg, True
 
     if phase == "error":
-        return state, "An error occurred. Please try again or contact admissions@riphah.edu.pk.", True
+        return _handle_error_phase(state, user_input)
 
-    return state, "I'm not sure how to handle that. Type 'cancel' to start over.", False
+    return state, (
+        "I'm not sure how to handle that.\n\n"
+        "Type **'cancel'** to start over, or describe your issue and I'll try to help."
+    ), False
 
 
 # ---------------------------------------------------------------------------
 # Phase handlers
 # ---------------------------------------------------------------------------
+
+def _handle_error_phase(state: dict, user_input: str) -> Tuple[dict, str, bool]:
+    """
+    Handle user messages when automation has errored out.
+    Offers retry or cancel instead of silently dying.
+    """
+    lower = user_input.strip().lower()
+    err   = state.get("automation_error") or state.get("automation_result", {}).get("message", "An error occurred.")
+    data  = state.get("collected_data", {})
+
+    retry_words  = {"retry", "try again", "try", "resubmit", "restart automation", "submit again"}
+    cancel_words = {"cancel", "stop", "quit", "no", "start over", "new application"}
+
+    if any(w in lower for w in retry_words):
+        # Reset to confirm phase so automation restarts
+        state["phase"] = "confirm"
+        state["automation_error"] = None
+        return state, (
+            "No problem — let's try again.\n\n"
+            + _confirm_prompt(state)
+        ), False
+
+    if any(w in lower for w in cancel_words):
+        state["phase"] = "cancelled"
+        return state, (
+            "Application cancelled. All your data has been cleared.\n\n"
+            "Say **'apply for admission'** anytime to start a fresh application."
+        ), True
+
+    # Default: show error with options
+    name = data.get("full_name", "")
+    prog = data.get("program", "")
+    return state, (
+        f"❌ **Automation error** for {name} ({prog}):\n\n"
+        f"> {err}\n\n"
+        "**What would you like to do?**\n"
+        "• Type **'retry'** to attempt portal submission again\n"
+        "• Type **'cancel'** to start a fresh application\n"
+        "• Contact **admissions@riphah.edu.pk** if the problem persists"
+    ), False
+
+
+def _collected_summary(state: dict) -> str:
+    """Return a compact one-line summary of what has been collected so far."""
+    data   = state.get("collected_data", {})
+    fields = state.get("fields", [])
+    done   = [f for f in fields if data.get(f["key"])]
+    if not done:
+        return ""
+    items = ", ".join(f["label"] for f in done[:4])
+    extra = f" +{len(done) - 4} more" if len(done) > 4 else ""
+    return f"*Collected so far: {items}{extra}*"
+
 
 def _handle_scanning(state: dict) -> Tuple[dict, str, bool]:
     """
@@ -227,37 +332,93 @@ def _handle_scanning(state: dict) -> Tuple[dict, str, bool]:
 
 
 def _handle_collecting(state: dict, user_input: str) -> Tuple[dict, str, bool]:
-    """Validate current field answer, store it, advance to next question."""
-    fields = state["fields"]
-    idx    = state["current_field_idx"]
+    """
+    Validate current field answer, store it, advance to next question.
+
+    Improvements over original:
+      - Off-topic detection: redirects back to the current question
+      - 'back' command: re-answer the previous field
+      - Retry counter: after MAX_FIELD_RETRIES failures, show a concrete example
+      - Context summary: shows progress bar and collected fields on every response
+    """
+    fields = state.setdefault("fields", [])
+    idx    = state.get("current_field_idx", 0)
+    retries: dict = state.setdefault("field_retry_counts", {})
 
     if idx >= len(fields):
-        # All fields collected — go to review
         _ensure_portal_password(state)
         state["phase"] = "review"
         return state, _review_prompt(state), False
 
-    field = fields[idx]
-    value = user_input.strip()
+    field      = fields[idx]
+    field_key  = field.get("key", "")
+    value      = user_input.strip()
+    total      = len(fields)
 
+    # ── 'back' command: re-answer the previous field ─────────────────────────
+    if value.lower() in ("back", "go back", "previous", "prev") and idx > 0:
+        state["current_field_idx"] = idx - 1
+        prev_field = fields[idx - 1]
+        prev_key   = prev_field.get("key", "")
+        old_value  = state.get("collected_data", {}).get(prev_key, "")
+        retries.pop(prev_key, None)
+        summary = _collected_summary(state)
+        return state, (
+            f"Going back to **{prev_field['label']}**.\n"
+            f"Current value: *{old_value}*\n\n"
+            f"{_question(prev_field, idx, total)}"
+            + (f"\n\n{summary}" if summary else "")
+        ), False
+
+    # ── Off-topic detection ───────────────────────────────────────────────────
+    if _is_offtopic(value, field):
+        summary = _collected_summary(state)
+        return state, (
+            "I'm collecting your admission details right now — I can answer general questions after we finish.\n\n"
+            f"Back to the form: {_question(field, idx + 1, total)}"
+            + (f"\n\n{summary}" if summary else "")
+        ), False
+
+    # ── Validate ──────────────────────────────────────────────────────────────
     error = _validate(field, value)
     if error:
-        return state, f"{error}\n\n{_question(field, idx + 1, len(fields))}", False
+        retry_count = retries.get(field_key, 0) + 1
+        retries[field_key] = retry_count
 
+        example = _field_example(field)
+        hint_block = ""
+        if retry_count >= MAX_FIELD_RETRIES and example:
+            hint_block = f"\n\n💡 **Example:** {example}"
+
+        summary = _collected_summary(state)
+        return state, (
+            f"⚠️ {error}"
+            f"{hint_block}\n\n"
+            f"{_question(field, idx + 1, total)}"
+            + (f"\n\n{summary}" if summary else "")
+        ), False
+
+    # ── Valid: store, advance ─────────────────────────────────────────────────
+    retries.pop(field_key, None)   # reset retry counter on success
     value = _normalize(field, value)
-    state["collected_data"][field["key"]] = value
+    state.setdefault("collected_data", {})[field_key] = value
     state["current_field_idx"] = idx + 1
     next_idx = state["current_field_idx"]
+
+    # Progress bar  e.g.  [████████░░░░]  8/12
+    done_pct    = int((next_idx / total) * 12)
+    progress    = "█" * done_pct + "░" * (12 - done_pct)
+    progress_ln = f"[{progress}] {next_idx}/{total}"
 
     if next_idx >= len(fields):
         _ensure_portal_password(state)
         state["phase"] = "review"
-        ack = _ack(field["key"], value)
-        return state, f"{ack}\n\n{_review_prompt(state)}", False
+        ack = _ack(field_key, value)
+        return state, f"{ack}\n\n{progress_ln} — All questions answered!\n\n{_review_prompt(state)}", False
 
-    ack    = _ack(field["key"], value)
-    next_q = _question(fields[next_idx], next_idx + 1, len(fields))
-    return state, f"{ack}\n\n{next_q}", False
+    ack    = _ack(field_key, value)
+    next_q = _question(fields[next_idx], next_idx + 1, total)
+    return state, f"{ack} {progress_ln}\n\n{next_q}", False
 
 
 def _ensure_portal_password(state: dict) -> None:

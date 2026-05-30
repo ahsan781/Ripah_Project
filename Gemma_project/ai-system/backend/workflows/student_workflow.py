@@ -17,7 +17,7 @@ Flow:
 
 import re
 
-from backend.models.ollama_client import generate, AGENT_MODEL
+from backend.models.openai_client import generate, AGENT_MODEL
 
 SYSTEM_PROMPT = """You are a Riphah International University student information assistant.
 You have access to live student records from the university database.

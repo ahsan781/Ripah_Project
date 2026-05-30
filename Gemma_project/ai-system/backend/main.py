@@ -40,6 +40,7 @@ from backend.agents import hr_agent, rag_agent
 from backend.routers.auth_router import router as auth_router
 from backend.routers.admin_router import router as admin_router
 from backend.routers.openai_compat import router as openai_compat_router
+from backend.routers.workflow_builder import router as workflow_builder_router
 from backend.database.db import (
     get_patient_by_name,
     get_all_doctors,
@@ -82,7 +83,7 @@ _admission_queues: dict[str, asyncio.Queue] = {}
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     print("[Startup] Medical AI Backend starting...")
-    print(f"[Startup] Ollama host: {os.getenv('OLLAMA_HOST', 'http://localhost:11434')}")
+    print(f"[Startup] OpenAI model: {os.getenv('OPENAI_WORKFLOW_MODEL', 'gpt-4o')}")
     # Create default admin account if none exists
     try:
         from backend.database.db import get_user_by_email, create_user
@@ -153,6 +154,7 @@ app = FastAPI(
 app.include_router(auth_router)
 app.include_router(admin_router)
 app.include_router(openai_compat_router)
+app.include_router(workflow_builder_router)
 
 app.add_middleware(
     CORSMiddleware,
@@ -184,6 +186,11 @@ class SlotConfirmRequest(BaseModel):
     date:        str
     time:        str
     datetime_iso: Optional[str] = ""
+
+
+class TaskAutomateRequest(BaseModel):
+    task: str
+    session_id: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------
@@ -459,12 +466,12 @@ async def root():
 
 @app.get("/api/health")
 async def health():
-    from backend.models.ollama_client import health_check
+    from backend.models.openai_client import health_check
     from backend.automation.schema_cache import get_cache_summary
-    ollama = await asyncio.to_thread(health_check)
+    openai_status = await asyncio.to_thread(health_check)
     return {
         "status":         "ok",
-        "ollama":         ollama,
+        "openai":         openai_status,
         "workflow_count": len(_workflow_states),
         "portal_cache":   get_cache_summary(),
     }
@@ -972,61 +979,99 @@ async def chat(req: ChatRequest):
     # -----------------------------------------------------------------------
     if session_id in _session_workflows:
         wf_state = _session_workflows[session_id]
-        phase = wf_state.get("phase", "")
+        phase    = wf_state.get("phase", "")
+        data     = wf_state.get("collected_data", {})
 
+        # ── While automation is running ───────────────────────────────────────
         if phase == "automating":
-            # Automation is running — just acknowledge
+            name = data.get("full_name", "applicant")
+            prog = data.get("program", "")
+            campus = data.get("campus", "")
+            response_text = (
+                f"⏳ **Automation is running** — submitting {name}'s application for **{prog}** ({campus}).\n\n"
+                "Live progress is shown in the panel below. Please wait, this takes 1–3 minutes.\n\n"
+                "*Tip: do not close this tab.*"
+            )
             try:
-                add_message(session_id, "user", req.text, "admission")
-                add_message(session_id, "assistant", "Automation is in progress. Please wait...", "admission", [])
+                add_message(session_id, "user",      req.text,       "admission")
+                add_message(session_id, "assistant",  response_text,  "admission", [])
             except Exception:
                 pass
             return {
-                "session_id": session_id,
-                "response":   "Your application is being submitted right now. Watch the progress panel below.",
-                "workflow":   "admission",
-                "sources":    [],
+                "session_id":           session_id,
+                "response":             response_text,
+                "workflow":             "admission",
+                "sources":              [],
                 "admission_session_id": session_id,
+                "collected_data":       data,
             }
 
+        # ── Advance the workflow ──────────────────────────────────────────────
         from backend.workflows import admission_workflow
-        wf_state, response_text, is_terminal = await asyncio.to_thread(
-            admission_workflow.advance, wf_state, req.text
-        )
+        try:
+            wf_state, response_text, is_terminal = await asyncio.to_thread(
+                admission_workflow.advance, wf_state, req.text
+            )
+        except Exception as exc:
+            print(f"[Chat] Admission advance error: {exc}")
+            # Don't lose the state — surface the error and keep the session alive
+            response_text = (
+                "⚠️ An unexpected error occurred while processing your input.\n\n"
+                f"Error: `{exc}`\n\n"
+                "Your progress is saved. Please try your last answer again, or type **'cancel'** to start over."
+            )
+            is_terminal = False
+
         _session_workflows[session_id] = wf_state
         new_phase = wf_state.get("phase", "")
         extra: dict = {}
 
-        # ── Automation triggered by confirm "yes" ──
+        # ── Automation triggered ──────────────────────────────────────────────
         if new_phase == "automating":
             extra["admission_session_id"] = session_id
-
-            # Create a progress queue and wire the automation
             q: asyncio.Queue = asyncio.Queue()
             _admission_queues[session_id] = q
-
-            # Run Playwright in its own thread + ProactorEventLoop so Windows
-            # can spawn the Chromium subprocess. Progress bridges back to this
-            # queue automatically via _ThreadSafeProgressQueue.
             main_loop = asyncio.get_running_loop()
             _launch_admission_automation_thread(session_id, wf_state, q, main_loop)
 
-        # ── Terminal states (cancelled / complete / error) ──
-        if is_terminal and new_phase in ("cancelled", "complete", "error"):
+        # ── Automation just finished (phase flipped by background thread) ─────
+        if new_phase == "complete":
+            result = wf_state.get("automation_result", {})
+            response_text = result.get("message", response_text)
+
+        # ── Automation errored (phase set by background thread) ───────────────
+        if new_phase == "error" and not is_terminal:
+            # Store the error message in state for the error-phase handler
+            auto_result = wf_state.get("automation_result", {})
+            if auto_result and not wf_state.get("automation_error"):
+                wf_state["automation_error"] = auto_result.get("message", "Automation failed.")
+                _session_workflows[session_id] = wf_state
+            # Do NOT pop state yet — let user retry or cancel from the error phase
+
+        # ── Terminal: only remove state after true completion or cancel ───────
+        if is_terminal and new_phase in ("cancelled", "complete"):
             _session_workflows.pop(session_id, None)
             _admission_queues.pop(session_id, None)
+        # Note: "error" phase is NOT terminal here — user can retry via the error handler
+
+        # ── Attach collected data summary to every response ───────────────────
+        collected = wf_state.get("collected_data", {})
+        fields_done = [k for k, v in collected.items() if v and k != "portal_password_source"]
 
         try:
-            add_message(session_id, "user", req.text, "admission")
-            add_message(session_id, "assistant", response_text, "admission", [])
+            add_message(session_id, "user",      req.text,      "admission")
+            add_message(session_id, "assistant",  response_text, "admission", [])
         except Exception as e:
             print(f"[Chat] DB message save error: {e}")
 
         return {
-            "session_id": session_id,
-            "response":   response_text,
-            "workflow":   "admission",
-            "sources":    [],
+            "session_id":     session_id,
+            "response":       response_text,
+            "workflow":       "admission",
+            "sources":        [],
+            "phase":          new_phase,
+            "fields_done":    len(fields_done),
+            "collected_data": {k: v for k, v in collected.items() if k != "portal_password"},
             **extra,
         }
 
@@ -1250,3 +1295,71 @@ async def remove_document(doc_id: str):
         return {"status": "deleted"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ---------------------------------------------------------------------------
+# Task Automation Endpoints
+# ---------------------------------------------------------------------------
+
+@app.post("/api/task/automate")
+async def automate_task_endpoint(req: TaskAutomateRequest):
+    """
+    Describe any task in plain English and the system will:
+      1. Generate a structured workflow plan using GPT-4o.
+      2. Execute the workflow using the appropriate agents.
+      3. Return the plan + result.
+
+    Examples:
+      {"task": "Book a cardiology appointment for John Smith with chest pain urgently"}
+      {"task": "Apply for MBBS admission at Riphah for Ahsan Khan"}
+      {"task": "Summarise the leave policy and book 3 days leave for next week"}
+    """
+    from backend.workflows.task_automation_workflow import automate_task
+
+    task = (req.task or "").strip()
+    if not task:
+        raise HTTPException(status_code=422, detail="'task' field must not be empty.")
+
+    if len(task) > 2000:
+        raise HTTPException(status_code=422, detail="Task description too long (max 2000 characters).")
+
+    try:
+        result = await asyncio.to_thread(
+            automate_task, task, req.session_id
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    except RuntimeError as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Unexpected error: {exc}")
+
+    if result.get("status") == "error":
+        raise HTTPException(
+            status_code=500,
+            detail=result.get("error", "Workflow execution failed."),
+        )
+
+    return result
+
+
+@app.post("/api/task/plan")
+async def generate_task_plan(req: TaskAutomateRequest):
+    """
+    Generate a workflow plan for a task WITHOUT executing it.
+    Useful to preview the steps before committing to execution.
+    """
+    from backend.workflows.task_automation_workflow import generate_workflow_plan
+
+    task = (req.task or "").strip()
+    if not task:
+        raise HTTPException(status_code=422, detail="'task' field must not be empty.")
+
+    try:
+        plan = await asyncio.to_thread(generate_workflow_plan, task)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Plan generation failed: {exc}")
+
+    return {"status": "ok", "plan": plan}

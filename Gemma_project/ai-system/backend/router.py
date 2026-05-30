@@ -1,4 +1,4 @@
-from backend.models.ollama_client import generate_json, INTENT_MODEL
+from backend.models.openai_client import generate_json, INTENT_MODEL
 from backend.prompts.university_prompts import ROUTER_SYSTEM
 
 KEYWORD_ROUTES: dict[str, list[str]] = {

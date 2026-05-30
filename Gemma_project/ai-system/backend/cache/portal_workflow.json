@@ -67,7 +67,7 @@
       },
       {
         "key": "portal_password",
-        "label": "Choose a Portal Password (min 8 chars — you'll use this to log in later)",
+        "label": "Choose a Portal Password (min 8 chars \u2014 you'll use this to log in later)",
         "type": "password",
         "required": true
       },
@@ -133,7 +133,7 @@
   },
   "954219d92f588903": {
     "portal_url": "https://admissions.riphah.edu.pk/riphah_demo/public/",
-    "explored_at": "2026-05-21T11:39:00",
+    "explored_at": "2026-05-24T23:20:19",
     "scan_failed": false,
     "login_form": {
       "email_sel": "input[name=\"email\"]",
@@ -199,7 +199,7 @@
       },
       {
         "key": "portal_password",
-        "label": "Choose a Portal Password (min 8 chars — you'll use this to log in later)",
+        "label": "Choose a Portal Password (min 8 chars \u2014 you'll use this to log in later)",
         "type": "password",
         "required": true
       },

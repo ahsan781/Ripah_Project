@@ -1,6 +1,6 @@
 import os
 import json
-from backend.models.ollama_client import generate_json, INTENT_MODEL
+from backend.models.openai_client import generate_json, INTENT_MODEL
 
 SYSTEM_PROMPT = """You are a medical intent classifier. Extract structured data from patient requests.
 Return ONLY a JSON object with these exact fields:

@@ -4,7 +4,7 @@ from pathlib import Path
 from qdrant_client import QdrantClient
 from qdrant_client.models import Distance, VectorParams, PointStruct, Filter, FieldCondition, MatchValue
 from dotenv import load_dotenv
-from backend.models.ollama_client import embed
+from backend.models.openai_client import embed
 
 load_dotenv()
 

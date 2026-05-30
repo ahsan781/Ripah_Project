@@ -1,4 +1,4 @@
-from backend.models.ollama_client import generate, WORKFLOW_MODEL
+from backend.models.openai_client import generate, WORKFLOW_MODEL
 
 SYSTEM_PROMPT = (
     "You are a document analysis assistant. Answer questions based ONLY on the provided "

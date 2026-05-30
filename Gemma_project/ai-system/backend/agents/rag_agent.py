@@ -1,6 +1,6 @@
 from qdrant_client.models import Distance, VectorParams, PointStruct
 from backend.rag.embeddings import get_client
-from backend.models.ollama_client import embed
+from backend.models.openai_client import embed
 from backend.file_processing.chunker import chunk_text
 
 VECTOR_SIZE = 768

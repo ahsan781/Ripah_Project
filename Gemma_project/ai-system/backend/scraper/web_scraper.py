@@ -17,7 +17,7 @@ import threading
 import httpx
 from qdrant_client.models import Distance, VectorParams, PointStruct
 
-from backend.models.ollama_client import embed
+from backend.models.openai_client import embed
 from backend.rag.embeddings import get_client
 
 COLLECTION_NAME = "university_knowledge"

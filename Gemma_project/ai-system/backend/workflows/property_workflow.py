@@ -6,7 +6,7 @@ rental properties, and general real estate queries in Pakistan.
 Searches `property_knowledge` Qdrant collection when available.
 """
 
-from backend.models.ollama_client import generate, WORKFLOW_MODEL, embed
+from backend.models.openai_client import generate, WORKFLOW_MODEL, embed
 from backend.rag.embeddings import get_client
 
 COLLECTION_NAME = "property_knowledge"

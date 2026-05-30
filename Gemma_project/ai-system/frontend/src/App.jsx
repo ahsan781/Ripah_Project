@@ -6,6 +6,7 @@ import LoginPage from './pages/LoginPage'
 import RegisterPage from './pages/RegisterPage'
 import AdminPanel from './pages/AdminPanel'
 import CategoryPage from './pages/CategoryPage'
+import WorkflowBuilderPage from './pages/WorkflowBuilderPage'
 
 const API = 'http://127.0.0.1:8000'
 
@@ -86,10 +87,11 @@ export default function App() {
   }
 
   // ── Page routing (ALL hooks above this line) ──────────────────────────
-  if (page === 'login')    return <LoginPage    onLogin={handleLogin} onGoRegister={() => setPage('register')} />
-  if (page === 'register') return <RegisterPage onLogin={handleLogin} onGoLogin={() => setPage('login')} />
-  if (page === 'admin')    return <AdminPanel   token={authToken} user={authUser} onBack={() => setPage('chat')} />
-  if (page === 'category') return <CategoryPage user={authUser} onSelectCategory={handleSelectCategory} onLogout={handleLogout} />
+  if (page === 'login')     return <LoginPage           onLogin={handleLogin} onGoRegister={() => setPage('register')} />
+  if (page === 'register')  return <RegisterPage         onLogin={handleLogin} onGoLogin={() => setPage('login')} />
+  if (page === 'admin')     return <AdminPanel            token={authToken} user={authUser} onBack={() => setPage('chat')} />
+  if (page === 'category')  return <CategoryPage          user={authUser} onSelectCategory={handleSelectCategory} onLogout={handleLogout} />
+  if (page === 'workflows') return <WorkflowBuilderPage  token={authToken} user={authUser} onBack={() => setPage('chat')} />
 
   // ── Helpers ───────────────────────────────────────────────────────────
   const authHead = { Authorization: `Bearer ${authToken}` }
@@ -285,6 +287,12 @@ export default function App() {
           )}
 
           <div className="ml-auto flex items-center gap-3">
+            <button
+              onClick={() => setPage('workflows')}
+              className="text-xs px-3 py-1.5 rounded-lg bg-purple-600 text-white hover:bg-purple-500 font-semibold transition-colors flex items-center gap-1.5"
+            >
+              ⚡ Workflows
+            </button>
             {authUser?.role === 'admin' && (
               <button
                 onClick={() => setPage('admin')}
