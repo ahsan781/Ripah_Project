@@ -374,6 +374,94 @@ def _resolve_placeholders(text: str, context: dict) -> str:
     return re.sub(r'\{(\w+)\}', _repl, text)
 
 
+def _run_medical_appointment(data: dict) -> dict:
+    """
+    Directly invoke Playwright medical appointment automation in a fresh event loop.
+    Books an appointment at https://rmc.riphah.edu.pk/appointment/
+
+    The agent (medical_appointment_agent.py) accepts these canonical keys:
+      patient_name, age, phone, email, doctor, date, time_slot, message
+
+    It also resolves legacy aliases (booking_name, booking_phone, etc.) internally,
+    so both naming schemes work.
+    """
+    import asyncio
+    import sys
+
+    # Resolve patient name from any alias
+    patient = (
+        data.get("patient_name") or
+        data.get("booking_name") or
+        data.get("full_name") or
+        data.get("name") or
+        ""
+    )
+    if not patient:
+        return {
+            "status": "error",
+            "output": "❌ 'patient_name' is required for appointment booking.",
+        }
+
+    # Normalise to the canonical keys the agent expects
+    data["patient_name"] = patient
+    data.setdefault("phone",     data.get("booking_phone",   data.get("mobile", "")))
+    data.setdefault("email",     data.get("booking_email",   ""))
+    data.setdefault("age",       data.get("booking_age",     ""))
+    data.setdefault("doctor",    data.get("booking_doctor",  data.get("specialty", "")))
+    data.setdefault("date",      data.get("booking_date",    data.get("appointment_date", "")))
+    data.setdefault("time_slot", data.get("booking_time",    ""))
+    data.setdefault("message",   data.get("booking_message") or data.get("symptoms") or data.get("reason", ""))
+
+    logger.info(
+        "[medical_appointment] Booking for %s — doctor: %s date: %s",
+        patient,
+        data.get("doctor", "auto-select"),
+        data.get("date", "not set"),
+    )
+
+    try:
+        from backend.automation.medical_appointment_agent import run_appointment_async, APPOINTMENT_URL
+
+        if sys.platform == "win32":
+            try:
+                asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
+            except Exception:
+                pass
+
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+
+        class _NullQueue:
+            def put_nowait(self, _): pass
+
+        try:
+            result = loop.run_until_complete(
+                run_appointment_async(
+                    data=data,
+                    progress_queue=_NullQueue(),
+                    appointment_url=APPOINTMENT_URL,
+                )
+            )
+        finally:
+            try:
+                loop.close()
+            except Exception:
+                pass
+
+        success = result.get("success", False)
+        msg     = result.get("message", "Appointment booking completed.")
+        logger.info("[medical_appointment] done — success=%s", success)
+        return {"status": "ok" if success else "error", "output": f"🏥 {msg}"}
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        hint = ""
+        if "executable" in str(e).lower() or "playwright" in str(e).lower():
+            hint = "\n\nRun: `python -m playwright install chromium`"
+        return {"status": "error", "output": f"❌ Playwright error: {e}{hint}"}
+
+
 def _run_admission_automation(data: dict) -> dict:
     """
     Directly invoke Playwright portal automation in a fresh event loop.
@@ -461,7 +549,52 @@ def _execute_action(action: dict, context: dict) -> dict:
 
     # ── browser_automation ────────────────────────────────────────────────────
     if atype in ("browser_automation", "automation"):
-        # Build the data dict — structured fields take priority, then parse task text
+        # Determine domain: workflow-level context key takes priority, then
+        # presence of medical-specific keys in context, then task text heuristic.
+        domain = context.get("_domain", "") or action.get("domain", "")
+        task   = _resolve_placeholders(config.get("task", ""), context) or context.get("task", "")
+
+        is_medical = (
+            domain == "medical"
+            or bool(context.get("patient_name") or context.get("booking_name"))
+            or bool(context.get("doctor") or context.get("specialty"))
+            or ("appointment" in task.lower() and "rmc" in task.lower())
+            or ("appointment" in task.lower() and "book" in task.lower()
+                and "admission" not in task.lower())
+        )
+
+        # ── Medical appointment booking ──────────────────────────────────
+        if is_medical:
+            # Canonical keys the agent expects
+            medical_canonical = [
+                "patient_name", "age", "phone", "email",
+                "doctor", "date", "time_slot", "message",
+            ]
+            # Legacy booking_* aliases the agent also accepts
+            medical_aliases = [
+                "booking_name", "booking_age", "booking_phone", "booking_email",
+                "booking_doctor", "booking_date", "booking_time", "booking_message",
+                "specialty", "symptoms", "reason", "appointment_date",
+            ]
+            data = {k: context.get(k, "") for k in medical_canonical + medical_aliases}
+
+            # If required fields are missing, try extracting them from task text
+            missing = [k for k in ("patient_name", "phone") if not data.get(k)]
+            if missing and task:
+                logger.info(
+                    "[medical_appointment] Extracting fields from task text: %s", task[:80]
+                )
+                extracted = _extract_fields_from_text(task)
+                for k in missing:
+                    if extracted.get(k):
+                        data[k] = extracted[k]
+                # Also try alias keys the extractor might return
+                if not data.get("patient_name"):
+                    data["patient_name"] = extracted.get("patient_name") or extracted.get("name") or ""
+
+            return _run_medical_appointment(data)
+
+        # ── Admission portal submission ────────────────────────────────────
         admission_fields = [
             "full_name", "father_name", "middle_name", "cnic", "dob", "gender",
             "email", "phone", "alternate_phone",
@@ -473,7 +606,6 @@ def _execute_action(action: dict, context: dict) -> dict:
         data = {k: context.get(k, "") for k in admission_fields}
 
         # If key fields are missing, try to parse from task description
-        task = _resolve_placeholders(config.get("task", ""), context) or context.get("task", "")
         missing_required = [k for k in ("full_name", "email", "program") if not data.get(k)]
         if missing_required and task:
             logger.info("[browser_automation] Extracting fields from task text: %s", task[:80])
@@ -548,7 +680,8 @@ def _execute_workflow(workflow: dict, input_data: dict, run_id: str) -> dict:
         }
 
     # ── Execute actions ────────────────────────────────────────────────────────
-    context      = dict(input_data)
+    context = dict(input_data)
+    context["_domain"] = workflow.get("domain", "general")   # lets _execute_action route correctly
     step_results = []
 
     for action in actions:

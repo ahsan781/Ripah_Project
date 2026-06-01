@@ -519,12 +519,21 @@ const DOMAIN_INPUT_FIELDS = {
     { key: 'heard_from',      label: 'How did you hear about Riphah?',   required: false, placeholder: 'Friend or Family / Facebook / Google' },
   ],
   medical: [
-    { key: 'patient_name', label: 'Patient Name',   required: true,  placeholder: 'Ahmad Khan' },
-    { key: 'phone',        label: 'Phone Number',   required: false, placeholder: '0300-1234567' },
-    { key: 'email',        label: 'Email',          required: false, placeholder: 'patient@email.com' },
-    { key: 'specialty',    label: 'Specialty',      required: true,  placeholder: 'Cardiology / General / ENT' },
-    { key: 'urgency',      label: 'Urgency',        required: false, placeholder: 'urgent / routine' },
-    { key: 'symptoms',     label: 'Symptoms',       required: false, placeholder: 'chest pain, shortness of breath' },
+    // ── Doctor (matches DOCTOR_OPTIONS in medical_appointment_agent.py) ─────
+    {
+      key: 'doctor', label: 'Doctor (RMC Portal)', required: false,
+      placeholder: 'Dr. Arooj Arshad / Ms. Sidrah Kanwal / Dr Muhammad Hashim PT / Dr Mehar un nisa PT',
+    },
+    // ── Patient details ──────────────────────────────────────────────────────
+    { key: 'patient_name', label: 'Patient Full Name', required: true,  placeholder: 'Ahmad Khan' },
+    { key: 'age',          label: 'Patient Age',        required: true,  placeholder: '30' },
+    { key: 'phone',        label: 'Phone Number',       required: true,  placeholder: '03001234567' },
+    { key: 'email',        label: 'Email Address',      required: false, placeholder: 'patient@gmail.com' },
+    // ── Appointment slot (Flatpickr formats) ──────────────────────────────────
+    { key: 'date',         label: 'Appointment Date (MM-DD-YYYY or YYYY-MM-DD)', required: false, placeholder: '06-20-2026' },
+    { key: 'time_slot',    label: 'Appointment Time (12-hour, e.g. 10:30 AM)',   required: false, placeholder: '10:30 AM' },
+    // ── Message / symptoms ───────────────────────────────────────────────────
+    { key: 'message',      label: 'Symptoms / Reason for Visit', required: false, placeholder: 'Knee pain, follow-up after physiotherapy session' },
   ],
   hr: [
     { key: 'employee_name',  label: 'Employee Name',     required: true,  placeholder: 'Ali Hassan' },
@@ -587,11 +596,11 @@ function RunInputModal({ domain, onRun, onClose }) {
         <div className="overflow-y-auto flex-1 px-5 py-4">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             {fields.map(f => (
-              <div key={f.key} className={f.key === 'task' || f.key === 'symptoms' ? 'col-span-2' : ''}>
+              <div key={f.key} className={['task', 'symptoms', 'message'].includes(f.key) ? 'col-span-2' : ''}>
                 <label className="text-[10px] font-semibold uppercase tracking-wider text-slate-500 block mb-1">
                   {f.label} {f.required && <span className="text-red-400">*</span>}
                 </label>
-                {f.key === 'task' || f.key === 'symptoms' ? (
+                {['task', 'symptoms', 'message'].includes(f.key) ? (
                   <textarea
                     value={values[f.key] || ''}
                     onChange={e => set(f.key, e.target.value)}
@@ -674,36 +683,43 @@ const TEMPLATES = [
     },
   },
   {
-    id: 'medical',
+    id: 'riphah_clinic',
     icon: '🏥',
-    label: 'Medical Appointment',
-    desc: 'Book doctor appointment automatically',
+    label: 'RMC Medical Appointment',
+    desc: 'Auto-book at rmc.riphah.edu.pk/appointment (MetForm portal)',
     wf: {
-      name:        'Medical Appointment Booking',
-      description: 'Automatically book a medical appointment based on patient details and specialty',
+      name:        'RMC Riphah Medical Appointment Booking',
+      description: 'Automatically fill and submit the Riphah Medical Centre appointment form (MetForm, React-Select doctor dropdown, Flatpickr date/time)',
       domain:      'medical',
       trigger: { type: 'keyword', config: { keyword: 'book appointment' } },
-      conditions: [
-        { id: 'c1', field: 'urgency', operator: 'eq', value: 'urgent', logic: 'AND' },
-      ],
+      conditions: [],
       actions: [
         {
           id: 'a1', order: 1,
-          type: 'llm_generate',
-          name: 'Check Available Slots',
-          config: { prompt: 'Find the next available appointment slot for {specialty} for patient {patient_name}. Urgency: {urgency}. Return a suggested date and time.' },
+          type: 'browser_automation',
+          name: 'Book Appointment on RMC Portal',
+          config: {
+            task: 'Book appointment at rmc.riphah.edu.pk for patient {patient_name}, age {age}, phone {phone}, doctor {doctor}, date {date}, time {time_slot}. Message: {message}',
+          },
         },
         {
           id: 'a2', order: 2,
-          type: 'browser_automation',
-          name: 'Book Appointment on Portal',
-          config: { task: 'Book a {urgency} {specialty} appointment for {patient_name}, phone {phone}, on the next available slot' },
+          type: 'send_email',
+          name: 'Send Appointment Confirmation',
+          config: {
+            to:      '{email}',
+            subject: 'Your RMC Appointment is Confirmed',
+            body:    'Dear {patient_name},\n\nYour appointment at Riphah Medical Centre has been booked.\n\nDoctor: {doctor}\nDate: {date}\nTime: {time_slot}\nReason: {message}\n\nPlease arrive 15 minutes early with your CNIC.\n\nRMC Riphah Medical Centre',
+          },
         },
         {
           id: 'a3', order: 3,
-          type: 'send_email',
-          name: 'Send Appointment Confirmation',
-          config: { to: '{email}', subject: 'Appointment Confirmed — {specialty}', body: 'Dear {patient_name},\n\nYour {specialty} appointment has been confirmed.\n\nDate: {date}\nDoctor: {doctor_name}\n\nPlease arrive 15 minutes early.' },
+          type: 'notification',
+          name: 'Staff Notification',
+          config: {
+            message: 'New appointment booked — {patient_name} | Doctor: {doctor} | {date} {time_slot}',
+            channel: 'in-app',
+          },
         },
       ],
     },
