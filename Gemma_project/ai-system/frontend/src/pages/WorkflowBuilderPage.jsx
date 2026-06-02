@@ -492,48 +492,64 @@ function RunPanel({ run, onClose }) {
 const DOMAIN_INPUT_FIELDS = {
   admission: [
     // ── Personal ────────────────────────────────────────────────────────────
-    { key: 'full_name',       label: 'Full Name (as on CNIC)',           required: true,  placeholder: 'Muhammad Ahmad Khan' },
-    { key: 'father_name',     label: "Father's Name",                    required: false, placeholder: 'Muhammad Imran Khan' },
-    { key: 'cnic',            label: 'CNIC / B-Form',                    required: true,  placeholder: '35202-1234567-9' },
-    { key: 'dob',             label: 'Date of Birth (DD/MM/YYYY)',        required: false, placeholder: '15/06/2000' },
-    { key: 'gender',          label: 'Gender',                           required: false, placeholder: 'Male / Female' },
+    { key: 'full_name',       label: 'Full Name (as on CNIC)',            required: true,  placeholder: 'Muhammad Ahmad Khan' },
+    { key: 'father_name',     label: "Father's Name",                     required: false, placeholder: 'Muhammad Imran Khan' },
+    { key: 'cnic',            label: 'CNIC / B-Form',                     required: true,  placeholder: '35202-1234567-9' },
+    { key: 'dob',             label: 'Date of Birth (DD/MM/YYYY)',         required: false, placeholder: '15/06/2000' },
+    { key: 'gender',          label: 'Gender',                            required: false,
+      type: 'select', options: ['Male', 'Female'] },
     // ── Contact ─────────────────────────────────────────────────────────────
-    { key: 'email',           label: 'Email Address',                    required: true,  placeholder: 'ahmad@gmail.com' },
-    { key: 'phone',           label: 'Mobile Number',                    required: false, placeholder: '0300-1234567' },
-    { key: 'alternate_phone', label: 'Alternate / WhatsApp Number',      required: false, placeholder: '0311-1234567' },
-    { key: 'address',         label: 'Residential Address',              required: false, placeholder: 'House 5, Street 3, G-6, Islamabad' },
-    { key: 'city',            label: 'City',                             required: false, placeholder: 'Islamabad' },
+    { key: 'email',           label: 'Email Address',                     required: true,  placeholder: 'ahmad@gmail.com' },
+    { key: 'phone',           label: 'Mobile Number',                     required: false, placeholder: '0300-1234567' },
+    { key: 'alternate_phone', label: 'Alternate / WhatsApp Number',       required: false, placeholder: '0311-1234567' },
+    { key: 'address',         label: 'Residential Address',               required: false, placeholder: 'House 5, Street 3, G-6, Islamabad' },
+    { key: 'city',            label: 'City',                              required: false, placeholder: 'Islamabad' },
     // ── Academic ────────────────────────────────────────────────────────────
-    { key: 'last_institute',  label: 'College / Last Institute Attended', required: false, placeholder: 'Government College Islamabad' },
-    { key: 'matric_marks',    label: 'Matric Marks / %',                 required: false, placeholder: '850/1100 or 77%' },
-    { key: 'inter_marks',     label: 'Intermediate Marks / %',           required: false, placeholder: '900/1100 or 82%' },
-    { key: 'entry_test',      label: 'Entry Test Score',                 required: false, placeholder: '85 or Not yet appeared' },
+    { key: 'last_institute',  label: 'College / Last Institute Attended',  required: false, placeholder: 'Government College Islamabad' },
+    { key: 'matric_marks',    label: 'Matric Marks / %',                  required: false, placeholder: '850/1100 or 77%' },
+    { key: 'inter_marks',     label: 'Intermediate Marks / %',            required: false, placeholder: '900/1100 or 82%' },
+    { key: 'entry_test',      label: 'Entry Test Score',                  required: false, placeholder: '85 or Not yet appeared' },
     // ── Program ─────────────────────────────────────────────────────────────
-    { key: 'campus',          label: 'Campus',                           required: false, placeholder: 'Islamabad / Lahore / Malakand' },
-    { key: 'level',           label: 'Program Level',                    required: false, placeholder: 'Undergraduate / Postgraduate / MS / PhD' },
-    { key: 'program',         label: 'Program — 1st choice',             required: true,  placeholder: 'MBBS / BS CS / BBA / MS Data Science' },
-    { key: 'program2',        label: 'Program — 2nd choice (optional)',  required: false, placeholder: 'BS Biomedical Engineering' },
-    { key: 'program3',        label: 'Program — 3rd choice (optional)',  required: false, placeholder: 'BS Software Engineering' },
+    { key: 'campus',          label: 'Campus',                            required: false,
+      type: 'select', options: ['Islamabad / Rawalpindi', 'Lahore', 'Malakand'] },
+    { key: 'level',           label: 'Program Level',                     required: false,
+      type: 'select', options: ['Undergraduate', 'Postgraduate', 'MS / MPhil', 'PhD', 'Diploma / Certificate'] },
+    { key: 'program',         label: 'Program — 1st choice',              required: true,  placeholder: 'MBBS / BS CS / BBA / MS Data Science' },
+    { key: 'program2',        label: 'Program — 2nd choice (optional)',   required: false, placeholder: 'BS Biomedical Engineering' },
+    { key: 'program3',        label: 'Program — 3rd choice (optional)',   required: false, placeholder: 'BS Software Engineering' },
     // ── Portal ──────────────────────────────────────────────────────────────
-    { key: 'portal_password', label: 'Portal Password (min 8 chars)',    required: false, placeholder: 'Riphah@2026' },
-    { key: 'heard_from',      label: 'How did you hear about Riphah?',   required: false, placeholder: 'Friend or Family / Facebook / Google' },
+    { key: 'portal_password', label: 'Portal Password (min 8 chars)',     required: false, placeholder: 'Riphah@2026' },
+    { key: 'heard_from',      label: 'How did you hear about Riphah?',    required: false,
+      type: 'select', options: ['Friend or Family', 'Facebook', 'Instagram', 'Google', 'YouTube', 'Newspaper', 'Poster / Banners'] },
   ],
   medical: [
-    // ── Doctor (matches DOCTOR_OPTIONS in medical_appointment_agent.py) ─────
-    {
-      key: 'doctor', label: 'Doctor (RMC Portal)', required: false,
-      placeholder: 'Dr. Arooj Arshad / Ms. Sidrah Kanwal / Dr Muhammad Hashim PT / Dr Mehar un nisa PT',
-    },
-    // ── Patient details ──────────────────────────────────────────────────────
+    // ── Doctor — exact names from rmc.riphah.edu.pk/appointment/ ─────────────
+    { key: 'doctor', label: 'Select Doctor (RMC Portal)', required: false,
+      type: 'select', options: [
+        'Ms. Sidrah Kanwal',
+        'Ms. Inaba Shujaat Qureshi',
+        'Saira Khalid',
+        'Dr. Farheen Naz Anis',
+        'Dr Muhammad Hashim PT',
+        'Dr Mehar un nisa PT',
+        'Dr.Iqra Abdul Ghafoor',
+        'Ms. Rimsha Tufail',
+        'Dr. Arooj Arshad',
+        'Ms. Aleena Arshad',
+        'Ms Sadaf Rehman',
+        'Dr. Ammar Hameed PT',
+      ] },
+    // ── Patient details ───────────────────────────────────────────────────────
     { key: 'patient_name', label: 'Patient Full Name', required: true,  placeholder: 'Ahmad Khan' },
     { key: 'age',          label: 'Patient Age',        required: true,  placeholder: '30' },
     { key: 'phone',        label: 'Phone Number',       required: true,  placeholder: '03001234567' },
     { key: 'email',        label: 'Email Address',      required: false, placeholder: 'patient@gmail.com' },
-    // ── Appointment slot (Flatpickr formats) ──────────────────────────────────
-    { key: 'date',         label: 'Appointment Date (MM-DD-YYYY or YYYY-MM-DD)', required: false, placeholder: '06-20-2026' },
-    { key: 'time_slot',    label: 'Appointment Time (12-hour, e.g. 10:30 AM)',   required: false, placeholder: '10:30 AM' },
-    // ── Message / symptoms ───────────────────────────────────────────────────
-    { key: 'message',      label: 'Symptoms / Reason for Visit', required: false, placeholder: 'Knee pain, follow-up after physiotherapy session' },
+    // ── Appointment slot ──────────────────────────────────────────────────────
+    { key: 'date',      label: 'Appointment Date (MM-DD-YYYY)', required: false, placeholder: '06-20-2026' },
+    { key: 'time_slot', label: 'Appointment Time (e.g. 10:30 AM)', required: false, placeholder: '10:30 AM' },
+    // ── Symptoms ──────────────────────────────────────────────────────────────
+    { key: 'message', label: 'Symptoms / Reason for Visit', required: false,
+      type: 'textarea', placeholder: 'Knee pain, follow-up after physiotherapy session' },
   ],
   hr: [
     { key: 'employee_name',  label: 'Employee Name',     required: true,  placeholder: 'Ali Hassan' },
@@ -595,29 +611,45 @@ function RunInputModal({ domain, onRun, onClose }) {
         {/* Fields */}
         <div className="overflow-y-auto flex-1 px-5 py-4">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            {fields.map(f => (
-              <div key={f.key} className={['task', 'symptoms', 'message'].includes(f.key) ? 'col-span-2' : ''}>
-                <label className="text-[10px] font-semibold uppercase tracking-wider text-slate-500 block mb-1">
-                  {f.label} {f.required && <span className="text-red-400">*</span>}
-                </label>
-                {['task', 'symptoms', 'message'].includes(f.key) ? (
-                  <textarea
-                    value={values[f.key] || ''}
-                    onChange={e => set(f.key, e.target.value)}
-                    placeholder={f.placeholder}
-                    rows={3}
-                    className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-sm text-white placeholder-slate-600 resize-none focus:outline-none focus:border-purple-500"
-                  />
-                ) : (
-                  <input
-                    value={values[f.key] || ''}
-                    onChange={e => set(f.key, e.target.value)}
-                    placeholder={f.placeholder}
-                    className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-sm text-white placeholder-slate-600 focus:outline-none focus:border-purple-500"
-                  />
-                )}
-              </div>
-            ))}
+            {fields.map(f => {
+              const isWide = f.type === 'textarea' || ['task', 'message'].includes(f.key)
+              const inputCls = 'w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-sm text-white placeholder-slate-600 focus:outline-none focus:border-purple-500'
+              return (
+                <div key={f.key} className={isWide ? 'col-span-2' : ''}>
+                  <label className="text-[10px] font-semibold uppercase tracking-wider text-slate-500 block mb-1">
+                    {f.label} {f.required && <span className="text-red-400">*</span>}
+                  </label>
+
+                  {f.type === 'select' ? (
+                    <select
+                      value={values[f.key] || ''}
+                      onChange={e => set(f.key, e.target.value)}
+                      className={inputCls + ' cursor-pointer'}
+                    >
+                      <option value="">— Select —</option>
+                      {f.options.map(o => (
+                        <option key={o} value={o}>{o}</option>
+                      ))}
+                    </select>
+                  ) : f.type === 'textarea' ? (
+                    <textarea
+                      value={values[f.key] || ''}
+                      onChange={e => set(f.key, e.target.value)}
+                      placeholder={f.placeholder}
+                      rows={3}
+                      className={inputCls + ' resize-none'}
+                    />
+                  ) : (
+                    <input
+                      value={values[f.key] || ''}
+                      onChange={e => set(f.key, e.target.value)}
+                      placeholder={f.placeholder}
+                      className={inputCls}
+                    />
+                  )}
+                </div>
+              )
+            })}
           </div>
           {error && <p className="text-xs text-red-400 mt-3">{error}</p>}
         </div>

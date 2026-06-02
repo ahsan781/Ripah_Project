@@ -38,9 +38,9 @@ APPOINTMENT_URL = os.getenv("RIPHAH_APPOINTMENT_URL", "https://rmc.riphah.edu.pk
 SCREENSHOTS_DIR = Path(__file__).parent.parent / "static" / "screenshots"
 SCREENSHOTS_DIR.mkdir(parents=True, exist_ok=True)
 
-SHORT_TIMEOUT  = 3_000   # ms — per-locator timeout
+SHORT_TIMEOUT  = 5_000   # ms — per-locator timeout
 NAV_TIMEOUT    = 30_000  # ms — page.goto() timeout
-REACT_WAIT     = 4_000   # ms — extra wait for React-Select / Flatpickr to mount
+REACT_WAIT     = 6_000   # ms — extra wait for React-Select / Flatpickr to mount
 
 # Exact doctor names as they appear in the React-Select options
 # (values equal label text in this MetForm configuration)
@@ -283,106 +283,112 @@ class MedicalAppointmentAgent:
 
     async def _select_react_doctor(self, doctor_name: str) -> bool:
         """
-        Interact with the MetForm React-Select doctor dropdown.
+        Select a doctor from the MetForm React-Select dropdown.
 
-        The React-Select component (CSS prefix: mf-input-select) renders its
-        options as <div class="mf-input-select__option"> elements inside a
-        portal-mounted menu. Native page.select_option() is useless here.
-
-        Strategy:
-          1. Click .elementor-element-79f8371 .mf-input-select__control
-             to open the dropdown menu.
-          2. Wait for .mf-input-select__menu to become visible (up to 3 s).
-          3. Click the option div whose text matches doctor_name exactly,
-             then try a partial match if exact fails.
-          4. Fallback A: page.get_by_text() (Playwright's smart text locator).
-          5. Fallback B: JS injection — write directly to the hidden
-             input[name="booking_doctor"] via React's native input setter so
-             MetForm's onChange handler fires and records the selection.
+        React-Select renders its option list as a portal appended to <body>,
+        so options may NOT be inside the Elementor wrapper. We use broad
+        document-level selectors after opening the menu.
         """
         t = self.t
         if not doctor_name:
             return False
 
-        # Elementor element wrapper for booking_doctor field (ID: 79f8371)
-        control_sel  = ".elementor-element-79f8371 .mf-input-select__control"
-        menu_sel     = ".elementor-element-79f8371 .mf-input-select__menu"
-        option_sel   = ".elementor-element-79f8371 .mf-input-select__option"
+        t.add(f"Selecting doctor: '{doctor_name}'", step_type="info")
 
-        t.add(f"Opening React-Select doctor dropdown (target: '{doctor_name}')", step_type="info")
-
-        # 1. Open the dropdown
-        try:
-            await self.page.locator(control_sel).click(timeout=SHORT_TIMEOUT)
-            await self.page.wait_for_timeout(700)
-        except Exception:
-            # Alternative: click by label htmlFor="mf-input-select-79f8371"
+        # ── Step 1: Scroll the control into view and click to open ───────────
+        control_selectors = [
+            ".elementor-element-79f8371 .mf-input-select__control",
+            ".mf-input-select__control",
+            "[id^='mf-input-select']",
+        ]
+        opened = False
+        for sel in control_selectors:
             try:
-                await self.page.locator("#mf-input-select-79f8371").click(timeout=SHORT_TIMEOUT)
-                await self.page.wait_for_timeout(700)
+                loc = self.page.locator(sel).first
+                await loc.scroll_into_view_if_needed(timeout=SHORT_TIMEOUT)
+                await loc.click(timeout=SHORT_TIMEOUT)
+                await self.page.wait_for_timeout(1000)
+                opened = True
+                t.add(f"[CLICK] Opened dropdown via '{sel}'", step_type="info")
+                break
             except Exception:
-                t.add("[WARN] React-Select control click failed", step_type="info")
+                continue
 
-        # 2. Wait for menu
+        if not opened:
+            t.add("[WARN] Could not click React-Select control — trying JS open", step_type="info")
+            # Force open via JS: simulate click on the first mf-input-select__control
+            try:
+                await self.page.evaluate("""() => {
+                    const ctrl = document.querySelector('.mf-input-select__control');
+                    if (ctrl) ctrl.dispatchEvent(new MouseEvent('mousedown', {bubbles:true}));
+                }""")
+                await self.page.wait_for_timeout(1000)
+            except Exception:
+                pass
+
+        # ── Step 2: Wait for the option list to appear (portal or inline) ───
         try:
-            await self.page.locator(menu_sel).wait_for(state="visible", timeout=3000)
+            await self.page.locator(".mf-input-select__option").first.wait_for(
+                state="visible", timeout=4000
+            )
         except Exception:
-            pass  # proceed anyway — maybe the menu is already there
+            t.add("[WARN] Option list not visible yet — trying anyway", step_type="info")
 
-        # 3a. Exact text match via option class selector
-        try:
-            opt = self.page.locator(option_sel).filter(has_text=doctor_name)
-            if await opt.count() > 0:
-                await opt.first.click(timeout=SHORT_TIMEOUT)
-                await self.page.wait_for_timeout(500)
-                t.add(f"[SELECT] booking_doctor <- '{doctor_name}' (React-Select .option click)")
-                return True
-        except Exception:
-            pass
+        # ── Step 3: Click the matching option (document-level search) ────────
+        # Try exact name first, then first-word partial match
+        for attempt_name in [doctor_name, doctor_name.split()[0], doctor_name.split()[-1]]:
+            try:
+                # All .mf-input-select__option divs anywhere in document
+                opt = self.page.locator(".mf-input-select__option").filter(has_text=attempt_name)
+                count = await opt.count()
+                if count > 0:
+                    await opt.first.scroll_into_view_if_needed(timeout=2000)
+                    await opt.first.click(timeout=SHORT_TIMEOUT)
+                    await self.page.wait_for_timeout(600)
+                    t.add(f"[SELECT] Doctor <- '{doctor_name}' (option click, matched '{attempt_name}')")
+                    return True
+            except Exception:
+                continue
 
-        # 3b. Partial text match
+        # ── Step 4: get_by_role / get_by_text broad fallback ─────────────────
         try:
-            opt = self.page.locator(option_sel).filter(has_text=doctor_name.split()[0])
-            if await opt.count() > 0:
-                await opt.first.click(timeout=SHORT_TIMEOUT)
-                await self.page.wait_for_timeout(500)
-                t.add(f"[SELECT] booking_doctor <- '{doctor_name}' (partial option match)")
-                return True
-        except Exception:
-            pass
-
-        # 4. Playwright get_by_text fallback
-        try:
-            await self.page.get_by_text(doctor_name, exact=True).click(timeout=SHORT_TIMEOUT)
-            await self.page.wait_for_timeout(500)
-            t.add(f"[SELECT] booking_doctor <- '{doctor_name}' (get_by_text fallback)")
+            await self.page.get_by_text(doctor_name, exact=False).first.click(timeout=SHORT_TIMEOUT)
+            await self.page.wait_for_timeout(600)
+            t.add(f"[SELECT] Doctor <- '{doctor_name}' (get_by_text fallback)")
             return True
         except Exception:
             pass
 
-        # 5. JS injection into hidden input so MetForm records the selection
+        # ── Step 5: JS injection — directly set the hidden input & fire events
         try:
-            injected = await self.page.evaluate(
+            ok = await self.page.evaluate(
                 """(val) => {
-                    const el = document.querySelector('input[name="booking_doctor"]');
-                    if (!el) return false;
-                    const setter = Object.getOwnPropertyDescriptor(
-                        window.HTMLInputElement.prototype, 'value'
-                    ).set;
-                    setter.call(el, val);
-                    el.dispatchEvent(new Event('input',  { bubbles: true }));
-                    el.dispatchEvent(new Event('change', { bubbles: true }));
-                    return true;
+                    // Try to set the hidden booking_doctor input
+                    const hidden = document.querySelector('input[name="booking_doctor"]');
+                    if (hidden) {
+                        const setter = Object.getOwnPropertyDescriptor(
+                            window.HTMLInputElement.prototype, 'value').set;
+                        setter.call(hidden, val);
+                        hidden.dispatchEvent(new Event('input',  {bubbles:true}));
+                        hidden.dispatchEvent(new Event('change', {bubbles:true}));
+                    }
+                    // Also try to click the matching option if menu is still open
+                    const opts = document.querySelectorAll('.mf-input-select__option');
+                    for (const o of opts) {
+                        if (o.textContent.includes(val)) { o.click(); return true; }
+                    }
+                    return !!hidden;
                 }""",
                 doctor_name,
             )
-            if injected:
-                t.add(f"[SELECT] booking_doctor <- '{doctor_name}' (JS hidden input injection)")
+            if ok:
+                await self.page.wait_for_timeout(600)
+                t.add(f"[SELECT] Doctor <- '{doctor_name}' (JS injection)")
                 return True
         except Exception:
             pass
 
-        t.add(f"[FAIL] Doctor selection failed for '{doctor_name}'", success=False, step_type="info")
+        t.add(f"[FAIL] Could not select doctor '{doctor_name}'", success=False)
         return False
 
     def _pick_best_doctor(self, hint: str) -> str:
@@ -609,6 +615,13 @@ class MedicalAppointmentAgent:
                 t.add("MetForm form confirmed visible")
             except Exception:
                 t.add("[WARN] .metform-form-content not found — proceeding", step_type="info")
+
+            # Scroll form into viewport so all elements are interactable
+            try:
+                await self.page.locator(".metform-form-content").scroll_into_view_if_needed(timeout=3000)
+                await self.page.wait_for_timeout(500)
+            except Exception:
+                pass
 
             await self._screenshot_step("form_ready", "Screenshot: Form ready")
 
